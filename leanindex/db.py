@@ -278,6 +278,29 @@ class IndexDB:
             row = self.conn.execute("SELECT COUNT(*) FROM declarations").fetchone()
         return row[0]
 
+    def get_topic_matched_count(self, repo_id: int) -> int:
+        """Count declarations in a repo that matched at least one topic."""
+        row = self.conn.execute("""
+            SELECT COUNT(DISTINCT d.id) FROM declarations d
+            JOIN topic_matches tm ON tm.declaration_id = d.id
+            WHERE d.repo_id = ?
+        """, (repo_id,)).fetchone()
+        return row[0]
+
+    def get_repos_with_topic_matches(self) -> list[dict]:
+        """Get repos that have at least one topic-matched declaration, with counts."""
+        rows = self.conn.execute("""
+            SELECT r.*,
+                   (SELECT COUNT(*) FROM declarations d2 WHERE d2.repo_id = r.id) as total_decls,
+                   COUNT(DISTINCT tm.declaration_id) as matched_decls
+            FROM repos r
+            JOIN declarations d ON d.repo_id = r.id
+            JOIN topic_matches tm ON tm.declaration_id = d.id
+            GROUP BY r.id
+            ORDER BY matched_decls DESC
+        """).fetchall()
+        return [dict(r) for r in rows]
+
     # --- Modules ---
 
     def bulk_upsert_modules(self, repo_id: int, modules: list[dict]):

@@ -9,7 +9,7 @@ from pathlib import Path
 
 from .config import IndexConfig
 from .db import IndexDB
-from .discover import discover_all
+from .discover import discover_all, _repo_matches_topics
 from .extract.mathlib_cache import index_mathlib
 from .extract.regex import extract_repo
 from .match import match_all_topics
@@ -151,7 +151,16 @@ def run_update(db: IndexDB, config: IndexConfig) -> dict:
                 "branch": repo_entry.branch,
             })
 
-    # 3. Index repos
+    # 3. Pre-filter repos by topic relevance (skip irrelevant Reservoir repos)
+    if config.topics:
+        pre_filter_count = len(discovered)
+        discovered = [r for r in discovered if _repo_matches_topics(r, config.topics)]
+        skipped = pre_filter_count - len(discovered)
+        if skipped > 0:
+            logger.info(f"Pre-filtered {skipped} repos with no topic relevance "
+                        f"({len(discovered)} remaining)")
+
+    # 4. Index repos
     logger.info(f"=== Step 3: Indexing {len(discovered)} repos ===")
     for repo_info in discovered:
         url = repo_info.get("url", "")
@@ -176,7 +185,7 @@ def run_update(db: IndexDB, config: IndexConfig) -> dict:
             logger.error(f"Error indexing {url}: {e}")
             stats["errors"].append(f"{url}: {e}")
 
-    # 4. Match topics
+    # 5. Match topics
     if config.topics:
         logger.info("=== Step 4: Matching topics ===")
         try:
@@ -185,7 +194,7 @@ def run_update(db: IndexDB, config: IndexConfig) -> dict:
             logger.error(f"Topic matching failed: {e}")
             stats["errors"].append(f"matching: {e}")
 
-    # 5. Log update
+    # 6. Log update
     summary = (f"Checked {stats['repos_checked']} repos, "
                f"updated {stats['repos_updated']}, "
                f"+{stats['new_declarations']} -{stats['removed_declarations']} declarations")

@@ -15,13 +15,13 @@ from .config import IndexConfig, TopicConfig
 logger = logging.getLogger(__name__)
 
 RESERVOIR_INDEX_REPO = "leanprover/reservoir-index"
-RESERVOIR_API = f"https://api.github.com/repos/{RESERVOIR_INDEX_REPO}/contents/packages"
 
 
 def discover_reservoir(cache_dir: Path, token: str | None = None) -> list[dict]:
     """Enumerate packages from the Lean Reservoir index.
 
-    Uses the GitHub Contents API to list packages in the reservoir-index repo.
+    Clones the reservoir-index repo (shallow) and reads metadata.json files.
+    Structure: owner/package-name/metadata.json
     Caches the result locally.
     """
     cache_file = cache_dir / "reservoir-packages.json"
@@ -35,80 +35,67 @@ def discover_reservoir(cache_dir: Path, token: str | None = None) -> list[dict]:
             with open(cache_file) as f:
                 return json.load(f)
 
-    logger.info("Fetching Lean Reservoir package list...")
-    headers = {"Accept": "application/vnd.github.v3+json"}
-    if token:
-        headers["Authorization"] = f"token {token}"
-
+    logger.info("Cloning Lean Reservoir index...")
+    import tempfile
     packages = []
-    page = 1
-    per_page = 100
 
-    while True:
-        resp = requests.get(
-            RESERVOIR_API,
-            params={"per_page": per_page, "page": page},
-            headers=headers,
-            timeout=30,
-        )
-
-        if resp.status_code == 403:
-            logger.warning("GitHub API rate limited. Using cached data if available.")
+    with tempfile.TemporaryDirectory(prefix="lean-index-reservoir-") as tmpdir:
+        clone_dir = Path(tmpdir) / "reservoir-index"
+        try:
+            result = subprocess.run(
+                ["git", "clone", "--depth", "1",
+                 f"https://github.com/{RESERVOIR_INDEX_REPO}.git",
+                 str(clone_dir)],
+                capture_output=True, text=True, timeout=60,
+            )
+            if result.returncode != 0:
+                logger.warning(f"Failed to clone Reservoir index: {result.stderr}")
+                if cache_file.exists():
+                    with open(cache_file) as f:
+                        return json.load(f)
+                return []
+        except (subprocess.TimeoutExpired, FileNotFoundError) as e:
+            logger.warning(f"Could not clone Reservoir index: {e}")
             if cache_file.exists():
                 with open(cache_file) as f:
                     return json.load(f)
-            return packages
+            return []
 
-        resp.raise_for_status()
-        items = resp.json()
+        # Walk the cloned repo: owner/package/metadata.json
+        for metadata_file in clone_dir.rglob("metadata.json"):
+            try:
+                with open(metadata_file) as f:
+                    meta = json.load(f)
 
-        if not items:
-            break
+                # Extract repo URL from sources
+                url = ""
+                branch = "main"
+                sources = meta.get("sources", [])
+                if sources:
+                    url = sources[0].get("repoUrl", sources[0].get("gitUrl", ""))
+                    branch = sources[0].get("defaultBranch", "main")
 
-        for item in items:
-            if item.get("type") == "dir":
+                if not url:
+                    continue
+
                 packages.append({
-                    "name": item["name"],
-                    "reservoir_path": item["path"],
+                    "name": meta.get("name", ""),
+                    "url": url,
+                    "description": meta.get("description", ""),
+                    "stars": meta.get("stars", 0),
+                    "branch": branch,
+                    "source": "reservoir",
                 })
-
-        if len(items) < per_page:
-            break
-        page += 1
-        time.sleep(0.5)  # Rate limiting
+            except (json.JSONDecodeError, KeyError) as e:
+                logger.debug(f"Could not parse {metadata_file}: {e}")
 
     logger.info(f"Found {len(packages)} Reservoir packages")
 
-    # Fetch metadata for each package (repo URL, description, stars)
-    enriched = []
-    for i, pkg in enumerate(packages):
-        if i % 50 == 0 and i > 0:
-            logger.info(f"  Fetching metadata: {i}/{len(packages)}")
-            time.sleep(1)
-
-        meta_url = f"https://api.github.com/repos/{RESERVOIR_INDEX_REPO}/contents/{pkg['reservoir_path']}/metadata.json"
-        try:
-            resp = requests.get(meta_url, headers=headers, timeout=15)
-            if resp.status_code == 200:
-                import base64
-                content = base64.b64decode(resp.json()["content"])
-                meta = json.loads(content)
-                pkg.update({
-                    "url": meta.get("url", meta.get("source", {}).get("url", "")),
-                    "description": meta.get("description", ""),
-                    "stars": meta.get("stars", 0),
-                })
-            time.sleep(0.3)
-        except Exception as e:
-            logger.debug(f"  Could not fetch metadata for {pkg['name']}: {e}")
-
-        enriched.append(pkg)
-
     # Cache results
     with open(cache_file, "w") as f:
-        json.dump(enriched, f)
+        json.dump(packages, f)
 
-    return enriched
+    return packages
 
 
 def discover_github(topics: list[TopicConfig], token: str | None = None) -> list[dict]:
@@ -183,6 +170,34 @@ def _github_api_search(keyword: str, repos: list, seen_urls: set,
         time.sleep(3)
     except Exception as e:
         logger.debug(f"GitHub API search failed for '{keyword}': {e}")
+
+
+def _repo_matches_topics(repo: dict, topics: list) -> bool:
+    """Quick check if a repo name/description suggests topic relevance.
+
+    This is a cheap pre-filter to avoid cloning hundreds of irrelevant repos.
+    We check repo name and description against topic search_keywords.
+    Mathlib and curated repos always pass.
+    """
+    source = repo.get("source", "")
+    if source == "curated":
+        return True
+
+    name = (repo.get("name", "") or "").lower()
+    desc = (repo.get("description", "") or "").lower()
+    text = f"{name} {desc}"
+
+    # Check against topic keywords
+    for topic in topics:
+        for kw in topic.search_keywords:
+            if kw.lower() in text:
+                return True
+        # Also check type mentions as they often appear in repo names
+        for mention in topic.matchers.type_mentions:
+            if mention.lower() in text:
+                return True
+
+    return False
 
 
 def discover_all(config: IndexConfig, cache_dir: Path) -> list[dict]:
