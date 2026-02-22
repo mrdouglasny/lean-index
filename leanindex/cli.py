@@ -82,6 +82,14 @@ def init(ctx):
         from .match import match_all_topics
         match_all_topics(db, config.topics)
 
+    # Auto-generate REPOS.md
+    from .report import generate_indexed_repos_md
+    repos_md = generate_indexed_repos_md(db)
+    repos_md_path = config.data_dir.parent / "REPOS.md"
+    with open(repos_md_path, "w") as f:
+        f.write(repos_md)
+    click.echo(f"Generated {repos_md_path}")
+
     db.close()
     click.echo("Done.")
 
@@ -108,6 +116,14 @@ def update(ctx):
         click.echo(f"  Errors: {len(stats['errors'])}")
         for e in stats["errors"][:5]:
             click.echo(f"    - {e}")
+
+    # Auto-generate REPOS.md
+    from .report import generate_indexed_repos_md
+    repos_md = generate_indexed_repos_md(db)
+    repos_md_path = config.data_dir.parent / "REPOS.md"
+    with open(repos_md_path, "w") as f:
+        f.write(repos_md)
+    click.echo(f"Generated {repos_md_path}")
 
     db.close()
 

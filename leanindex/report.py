@@ -111,3 +111,33 @@ def format_repos(db: IndexDB) -> str:
         lines.append(f"{name:<30} {count:>12,} {source:<15} {indexed}")
 
     return "\n".join(lines)
+
+
+def generate_indexed_repos_md(db: IndexDB) -> str:
+    """Generate a REPOS.md listing all repos that contributed declarations."""
+    repos = db.list_repos()
+    lines = []
+    lines.append("# Indexed Repositories\n")
+    lines.append("Repositories that contributed declarations to this index.\n")
+    lines.append(f"| Repository | Declarations | Source | Last Indexed |")
+    lines.append(f"|-----------|-------------|--------|-------------|")
+
+    total = 0
+    for r in sorted(repos, key=lambda x: -db.get_declaration_count(x["id"])):
+        count = db.get_declaration_count(r["id"])
+        if count == 0:
+            continue
+        total += count
+        url = r.get("url", "")
+        name = r["name"]
+        source = r.get("source", "")
+        indexed = (r.get("last_indexed_at") or "never")[:10]
+
+        if url:
+            name_col = f"[{name}]({url})"
+        else:
+            name_col = name
+        lines.append(f"| {name_col} | {count:,} | {source} | {indexed} |")
+
+    lines.append(f"\n**Total: {total:,} declarations from {sum(1 for r in repos if db.get_declaration_count(r['id']) > 0)} repositories**")
+    return "\n".join(lines)
