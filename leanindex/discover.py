@@ -228,6 +228,7 @@ def discover_all(config: IndexConfig, cache_dir: Path) -> list[dict]:
                 "name": pkg.get("name", ""),
                 "description": pkg.get("description", ""),
                 "stars": pkg.get("stars", 0),
+                "branch": pkg.get("branch", "main"),
                 "source": "reservoir",
             })
 
