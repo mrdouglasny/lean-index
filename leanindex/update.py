@@ -254,10 +254,16 @@ def run_update(db: IndexDB, config: IndexConfig) -> dict:
             stats["errors"].append(f"{url}: {e}")
 
     # 5. Index local repos (from local-repos.yaml)
+    # Collect URLs already indexed online to avoid duplicates
+    online_urls = {r.get("url", "").rstrip("/").lower() for r in discovered}
     if config.local_repos:
         logger.info(f"=== Step 4: Indexing {len(config.local_repos)} local repos ===")
         for entry in config.local_repos:
             try:
+                # Skip if this URL was already handled in the online step
+                if entry.url and entry.url.rstrip("/").lower() in online_urls:
+                    logger.info(f"Skipping local entry {entry.url} (already indexed online)")
+                    continue
                 if entry.path:
                     result = index_local(
                         db, path=entry.path,
