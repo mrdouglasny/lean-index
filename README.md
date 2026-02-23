@@ -18,7 +18,7 @@ lean-index maintains a SQLite database of Lean 4 declarations gathered from thre
 2. **Lean Reservoir packages** — 565+ registered Lean 4 packages, indexed by parsing `.lean` source files
 3. **GitHub search** — additional Lean 4 repos discovered via topic-specific keyword search
 
-Declarations are matched to configurable **topics** (e.g., "Lie algebras", "root systems") using module prefixes, type signature mentions, and name patterns.
+Declarations are matched to configurable **topics** (e.g., "Lie algebras", "root systems") using module prefixes, type signature mentions, and name patterns. Incomplete declarations (containing `sorry`) are filtered out, and results are [ranked by relevance](docs/search-and-ranking.md) using text match quality, topic confidence, repository stars, and documentation.
 
 ## Three-Layer Architecture
 
@@ -218,16 +218,21 @@ lean-index update                        # Full cycle: discover + index + match
 lean-index discover                      # Find repos from Reservoir + GitHub
 lean-index index-mathlib                 # Re-download + reindex Mathlib cache
 lean-index index-repo <url>              # Index specific repo (regex)
-lean-index build-repo <url>              # Deep index via lake build (optional)
 lean-index add-repo <url>                # Add to curated list
 
-# Search
+# Local repos (for consumers)
+lean-index add <path-or-url>             # Add local dir or remote URL to your index
+lean-index update                        # Re-index local repos (consumer mode)
+
+# Search (default: top 10 ranked results)
 lean-index search <query>               # Full-text search
 lean-index search --kind theorem         # Filter by declaration kind
 lean-index search --topic lie-algebras   # Filter by topic
 lean-index search --since 2026-02-01     # Filter by first-seen date
 lean-index search --type LieAlgebra      # Filter by type signature mention
 lean-index search --repo mathlib         # Filter by repo
+lean-index search -n 25                  # Custom result count
+lean-index search --all                  # All results (no limit)
 lean-index search --json                 # Output as JSON
 
 # Reports
@@ -235,6 +240,8 @@ lean-index stats                         # Summary statistics
 lean-index changelog --since 2026-02-15  # What's new
 lean-index repos                         # List tracked repos
 ```
+
+See [docs/search-and-ranking.md](docs/search-and-ranking.md) for details on sorry filtering, composite ranking, and search options.
 
 ## Package Structure
 
