@@ -125,6 +125,15 @@ def extract_file(path: str | Path, module: str = "") -> list[dict]:
                 # Extract type signature (first line + continuation)
                 sig = _extract_signature(lines, i, stripped, name)
 
+                # Check if body contains sorry
+                has_sorry = _body_has_sorry(lines, i)
+
+                # Skip declarations with sorry (incomplete proofs/definitions)
+                if has_sorry:
+                    current_docstring = None
+                    current_attrs = []
+                    continue
+
                 decls.append({
                     "name": fqn,
                     "kind": kind,
@@ -192,6 +201,49 @@ def _extract_signature(lines: list[str], start_idx: int,
             clean_sig = clean_sig[:clean_sig.index(terminator)]
 
     return clean_sig.strip()
+
+
+def _body_has_sorry(lines: list[str], decl_start: int) -> bool:
+    """Check if the declaration body starting at decl_start contains 'sorry'.
+
+    Scans from the := / where / by keyword through the body until the next
+    top-level declaration or end of indented block.
+    """
+    n = len(lines)
+
+    # Find where the body starts (look for :=, where, by on the decl line or continuation)
+    body_start = None
+    for j in range(decl_start, min(decl_start + 20, n)):
+        line = lines[j].rstrip("\n")
+        if ":= by" in line or ":= " in line or line.rstrip().endswith(":=") or " where" in line:
+            body_start = j
+            break
+        if " by" in line and line.rstrip().endswith("by"):
+            body_start = j
+            break
+
+    if body_start is None:
+        return False
+
+    # Scan body lines for sorry
+    indent = len(lines[decl_start]) - len(lines[decl_start].lstrip())
+    for j in range(body_start, min(body_start + 200, n)):
+        line = lines[j].rstrip("\n")
+        stripped = line.strip()
+
+        # Stop at next top-level declaration
+        if j > body_start and stripped:
+            line_indent = len(line) - len(line.lstrip())
+            words = stripped.split()
+            first = words[0] if words else ""
+            if line_indent <= indent and first in (DECL_KEYWORDS | MODIFIERS | {"namespace", "end", "section", "/--", "@["}):
+                break
+
+        # Check for sorry (as a word, not part of another identifier)
+        if re.search(r'\bsorry\b', stripped):
+            return True
+
+    return False
 
 
 def _needs_continuation(text: str) -> bool:

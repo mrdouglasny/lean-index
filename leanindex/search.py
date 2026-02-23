@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 def search(db: IndexDB, query: str = "", kind: str | None = None,
            topic: str | None = None, repo: str | None = None,
            since: str | None = None, type_mention: str | None = None,
-           limit: int = 50, offset: int = 0,
+           limit: int = 10, offset: int = 0,
            output_json: bool = False) -> str:
     """Search declarations and return formatted output."""
     if query:

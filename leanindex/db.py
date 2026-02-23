@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS repos (
@@ -37,6 +37,7 @@ CREATE TABLE IF NOT EXISTS declarations (
     file_path TEXT DEFAULT '',
     line INTEGER DEFAULT 0,
     is_noncomputable INTEGER DEFAULT 0,
+    has_sorry INTEGER DEFAULT 0,  -- 1 if body contains sorry
     axioms TEXT DEFAULT '',  -- JSON list
     first_seen_at TEXT NOT NULL,
     last_seen_at TEXT NOT NULL,
@@ -151,6 +152,21 @@ class IndexDB:
             conn.executescript(SCHEMA_SQL)
             conn.executescript(FTS_SQL)
             conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
+        self._migrate()
+
+    def _migrate(self):
+        """Run schema migrations for existing databases."""
+        version = self.get_schema_version()
+        if version < 2:
+            # Add has_sorry column
+            try:
+                self.conn.execute(
+                    "ALTER TABLE declarations ADD COLUMN has_sorry INTEGER DEFAULT 0"
+                )
+                self.conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
+                self.conn.commit()
+            except Exception:
+                pass  # Column already exists
 
     def get_schema_version(self) -> int:
         row = self.conn.execute("PRAGMA user_version").fetchone()
@@ -221,13 +237,14 @@ class IndexDB:
                     conn.execute("""
                         UPDATE declarations SET module=?, kind=?, type_sig=?,
                         type_html=?, docstring=?, file_path=?, line=?,
-                        is_noncomputable=?, axioms=?, last_seen_at=?
+                        is_noncomputable=?, has_sorry=?, axioms=?, last_seen_at=?
                         WHERE id=?
                     """, (
                         d.get("module", ""), d.get("kind", "def"),
                         d.get("type_sig", ""), d.get("type_html", ""),
                         d.get("docstring", ""), d.get("file_path", ""),
                         d.get("line", 0), int(d.get("is_noncomputable", False)),
+                        int(d.get("has_sorry", False)),
                         d.get("axioms", ""), now, row["id"]
                     ))
                     updated += 1
@@ -235,14 +252,15 @@ class IndexDB:
                     conn.execute("""
                         INSERT INTO declarations (repo_id, module, name, kind,
                         type_sig, type_html, docstring, file_path, line,
-                        is_noncomputable, axioms, first_seen_at, last_seen_at)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        is_noncomputable, has_sorry, axioms, first_seen_at, last_seen_at)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """, (
                         repo_id, d.get("module", ""), d["name"],
                         d.get("kind", "def"), d.get("type_sig", ""),
                         d.get("type_html", ""), d.get("docstring", ""),
                         d.get("file_path", ""), d.get("line", 0),
                         int(d.get("is_noncomputable", False)),
+                        int(d.get("has_sorry", False)),
                         d.get("axioms", ""), now, now
                     ))
                     inserted += 1
@@ -366,28 +384,37 @@ class IndexDB:
 
     # --- Search helpers ---
 
-    def fts_search(self, query: str, limit: int = 50, offset: int = 0,
+    def fts_search(self, query: str, limit: int = 10, offset: int = 0,
                    kind: str | None = None, topic: str | None = None,
                    repo: str | None = None, since: str | None = None,
                    type_mention: str | None = None) -> list[dict]:
-        """Full-text search with optional structured filters."""
+        """Full-text search with composite ranking.
+
+        Ranking combines BM25 text relevance with:
+        - Topic match confidence (higher = better match)
+        - Repo stars (log-scaled)
+        - Has docstring (documented is better)
+        - Declaration kind weight (theorems/defs > instances)
+        """
         params: list[Any] = []
         joins = []
         wheres = []
 
-        # Base FTS query
+        # Composite ranking: BM25 is negative (lower = better), so we negate it
+        # and add bonus signals. All wrapped in a single ORDER BY expression.
         base = """
             SELECT d.*, r.name as repo_name, r.url as repo_url,
-                   bm25(declarations_fts) as rank
+                   r.stars as repo_stars,
+                   bm25(declarations_fts) as bm25_rank,
+                   COALESCE(MAX(tm2.confidence), 0.0) as topic_confidence
             FROM declarations_fts fts
             JOIN declarations d ON d.id = fts.rowid
             JOIN repos r ON r.id = d.repo_id
+            LEFT JOIN topic_matches tm2 ON tm2.declaration_id = d.id
         """
 
         if query:
             wheres.append("declarations_fts MATCH ?")
-            # Quote each token to prevent FTS5 operator interpretation
-            # (e.g., "C*-algebra" -> '"C*-algebra"', "foo bar" -> '"foo" "bar"')
             safe_query = " ".join(f'"{token}"' for token in query.split())
             params.append(safe_query)
 
@@ -416,26 +443,48 @@ class IndexDB:
         sql = base + " ".join(joins)
         if wheres:
             sql += " WHERE " + " AND ".join(wheres)
-        sql += " ORDER BY rank LIMIT ? OFFSET ?"
+
+        # Group by declaration to aggregate topic confidence
+        sql += " GROUP BY d.id"
+
+        # Composite score: negate BM25 (lower=better) and add bonuses
+        # kind_weight: theorem/lemma=0.3, def/abbrev=0.2, structure/class=0.2, else=0
+        sql += """ ORDER BY (
+            -bm25_rank
+            + 0.3 * topic_confidence
+            + 0.2 * ln(COALESCE(r.stars, 0) + 1)
+            + 0.1 * CASE WHEN d.docstring != '' THEN 1 ELSE 0 END
+            + CASE d.kind
+                WHEN 'theorem' THEN 0.3
+                WHEN 'lemma' THEN 0.3
+                WHEN 'def' THEN 0.2
+                WHEN 'abbrev' THEN 0.1
+                WHEN 'structure' THEN 0.2
+                WHEN 'class' THEN 0.2
+                ELSE 0 END
+        ) DESC LIMIT ? OFFSET ?"""
         params.extend([limit, offset])
 
         rows = self.conn.execute(sql, params).fetchall()
         return [dict(r) for r in rows]
 
-    def structured_search(self, limit: int = 50, offset: int = 0,
+    def structured_search(self, limit: int = 10, offset: int = 0,
                           kind: str | None = None, topic: str | None = None,
                           repo: str | None = None, since: str | None = None,
                           type_mention: str | None = None,
                           name_pattern: str | None = None) -> list[dict]:
-        """Structured search without FTS (for non-text queries)."""
+        """Structured search with composite ranking (no FTS)."""
         params: list[Any] = []
         joins = []
         wheres = []
 
         base = """
-            SELECT d.*, r.name as repo_name, r.url as repo_url
+            SELECT d.*, r.name as repo_name, r.url as repo_url,
+                   r.stars as repo_stars,
+                   COALESCE(MAX(tm2.confidence), 0.0) as topic_confidence
             FROM declarations d
             JOIN repos r ON r.id = d.repo_id
+            LEFT JOIN topic_matches tm2 ON tm2.declaration_id = d.id
         """
 
         if kind:
@@ -467,7 +516,22 @@ class IndexDB:
         sql = base + " ".join(joins)
         if wheres:
             sql += " WHERE " + " AND ".join(wheres)
-        sql += " ORDER BY d.name LIMIT ? OFFSET ?"
+
+        sql += " GROUP BY d.id"
+
+        sql += """ ORDER BY (
+            0.3 * topic_confidence
+            + 0.2 * ln(COALESCE(r.stars, 0) + 1)
+            + 0.1 * CASE WHEN d.docstring != '' THEN 1 ELSE 0 END
+            + CASE d.kind
+                WHEN 'theorem' THEN 0.3
+                WHEN 'lemma' THEN 0.3
+                WHEN 'def' THEN 0.2
+                WHEN 'abbrev' THEN 0.1
+                WHEN 'structure' THEN 0.2
+                WHEN 'class' THEN 0.2
+                ELSE 0 END
+        ) DESC LIMIT ? OFFSET ?"""
         params.extend([limit, offset])
 
         rows = self.conn.execute(sql, params).fetchall()

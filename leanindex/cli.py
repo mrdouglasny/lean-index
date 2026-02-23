@@ -413,21 +413,28 @@ def add_repo_cmd(ctx, url, description, branch):
 @click.option("--repo", "-r", default=None, help="Filter by repo name")
 @click.option("--since", default=None, help="Filter by first-seen date (YYYY-MM-DD)")
 @click.option("--type", "type_mention", default=None, help="Filter by type signature mention")
-@click.option("--limit", "-n", default=50, help="Max results")
+@click.option("--limit", "-n", default=10, help="Max results (default: 10)")
+@click.option("--all", "show_all", is_flag=True, help="Show all results (no limit)")
 @click.option("--json", "output_json", is_flag=True, help="Output as JSON")
 @click.pass_context
-def search(ctx, query, kind, topic, repo, since, type_mention, limit, output_json):
-    """Search declarations by text and/or structured filters."""
+def search(ctx, query, kind, topic, repo, since, type_mention, limit, show_all, output_json):
+    """Search declarations by text and/or structured filters.
+
+    Results are ranked by relevance (text match, topic confidence, repo stars,
+    documentation quality, declaration kind). Default: top 10 results.
+    """
     db, config = get_db(ctx.obj["data_dir"], ctx.obj["config_dir"])
 
     if db.get_schema_version() == 0:
         click.echo("Database not initialized. Run 'lean-index init' first.")
         sys.exit(1)
 
+    effective_limit = 100000 if show_all else limit
+
     from .search import search as do_search
     output = do_search(
         db, query=query, kind=kind, topic=topic, repo=repo,
-        since=since, type_mention=type_mention, limit=limit,
+        since=since, type_mention=type_mention, limit=effective_limit,
         output_json=output_json,
     )
     click.echo(output)
