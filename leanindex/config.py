@@ -45,9 +45,20 @@ class RepoEntry:
 
 
 @dataclass
+class LocalRepoEntry:
+    """A repo in local-repos.yaml. Has either path (local) or url (remote)."""
+    path: str = ""
+    url: str = ""
+    name: str = ""
+    description: str = ""
+    branch: str = "main"
+
+
+@dataclass
 class IndexConfig:
     topics: list[TopicConfig] = field(default_factory=list)
     repos: list[RepoEntry] = field(default_factory=list)
+    local_repos: list[LocalRepoEntry] = field(default_factory=list)
     blocked_repos: set[str] = field(default_factory=set)
     data_dir: Path = field(default_factory=lambda: Path("data"))
 
@@ -124,12 +135,27 @@ def load_config(config_dir: Path | None = None,
                 branch=r.get("branch", "main"),
             ))
 
+    local_repos = []
+    local_repos_file = config_dir / "local-repos.yaml"
+    if local_repos_file.exists():
+        with open(local_repos_file) as f:
+            data = yaml.safe_load(f) or {}
+        for r in data.get("repos", []):
+            local_repos.append(LocalRepoEntry(
+                path=str(Path(r["path"]).expanduser()) if r.get("path") else "",
+                url=r.get("url", ""),
+                name=r.get("name", ""),
+                description=r.get("description", ""),
+                branch=r.get("branch", "main"),
+            ))
+
     resolved_data_dir = Path(data_dir) if data_dir else config_dir / "data"
     blocked = load_blocklist(config_dir)
 
     return IndexConfig(
         topics=topics,
         repos=repos,
+        local_repos=local_repos,
         blocked_repos=blocked,
         data_dir=resolved_data_dir,
     )

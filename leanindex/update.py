@@ -253,9 +253,43 @@ def run_update(db: IndexDB, config: IndexConfig) -> dict:
             logger.error(f"Error indexing {url}: {e}")
             stats["errors"].append(f"{url}: {e}")
 
-    # 5. Match topics
+    # 5. Index local repos (from local-repos.yaml)
+    if config.local_repos:
+        logger.info(f"=== Step 4: Indexing {len(config.local_repos)} local repos ===")
+        for entry in config.local_repos:
+            try:
+                if entry.path:
+                    result = index_local(
+                        db, path=entry.path,
+                        name=entry.name,
+                        description=entry.description,
+                    )
+                elif entry.url:
+                    result = index_repo(
+                        db, url=entry.url,
+                        name=entry.name,
+                        branch=entry.branch,
+                        description=entry.description,
+                        source="local-repos",
+                    )
+                else:
+                    continue
+
+                label = entry.path or entry.url
+                if result.get("error"):
+                    logger.warning(f"Local repo {label}: {result['error']}")
+                    stats["errors"].append(f"local:{label}: {result['error']}")
+                elif not result.get("skipped"):
+                    stats["repos_updated"] += 1
+                    stats["new_declarations"] += result.get("inserted", 0)
+                    stats["removed_declarations"] += result.get("removed", 0)
+            except Exception as e:
+                logger.error(f"Error indexing {entry.path or entry.url}: {e}")
+                stats["errors"].append(f"local:{entry.path or entry.url}: {e}")
+
+    # 6. Match topics
     if config.topics:
-        logger.info("=== Step 4: Matching topics ===")
+        logger.info("=== Step 5: Matching topics ===")
         try:
             match_all_topics(db, config.topics)
         except Exception as e:

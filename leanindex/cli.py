@@ -95,11 +95,69 @@ def init(ctx):
 
 
 @main.command()
+@click.option("--local-only", is_flag=True, help="Only re-index local repos (skip online)")
 @click.pass_context
-def update(ctx):
-    """Full update cycle: discover repos, index, match topics."""
+def update(ctx, local_only):
+    """Update the index.
+
+    In a topic repo (has topics.yaml): full cycle — Mathlib, discover, index, match.
+    In a consumer project (no topics.yaml): re-index local repos from local-repos.yaml.
+    Use --local-only in a topic repo to skip the full online cycle.
+    """
     db, config = get_db(ctx.obj["data_dir"], ctx.obj["config_dir"])
 
+    is_consumer = not config.topics
+    do_local_only = local_only or is_consumer
+
+    if do_local_only:
+        # Consumer mode or --local-only: just re-index local repos
+        if db.get_schema_version() == 0:
+            click.echo("Database not initialized. Run 'lean-index init' or 'lean-index fetch-db' first.")
+            sys.exit(1)
+
+        if not config.local_repos:
+            click.echo("No local repos configured. Use 'lean-index add <path-or-url>' first.")
+            sys.exit(0)
+
+        from .update import index_local, index_repo
+        from .match import match_all_topics
+
+        total_inserted = 0
+        total_removed = 0
+        for entry in config.local_repos:
+            label = entry.name or entry.path or entry.url
+            try:
+                if entry.path:
+                    result = index_local(db, path=entry.path, name=entry.name,
+                                         description=entry.description)
+                elif entry.url:
+                    result = index_repo(db, url=entry.url, name=entry.name,
+                                        branch=entry.branch, description=entry.description,
+                                        source="local-repos")
+                else:
+                    continue
+
+                if result.get("error"):
+                    click.echo(f"  {label}: error - {result['error']}")
+                elif result.get("skipped"):
+                    click.echo(f"  {label}: up to date")
+                else:
+                    click.echo(f"  {label}: {result.get('declarations', 0):,} declarations "
+                               f"({result.get('inserted', 0)} new, {result.get('removed', 0)} removed)")
+                    total_inserted += result.get("inserted", 0)
+                    total_removed += result.get("removed", 0)
+            except Exception as e:
+                click.echo(f"  {label}: error - {e}")
+
+        # Re-match topics if we have them
+        if config.topics:
+            match_all_topics(db, config.topics)
+
+        click.echo(f"\nLocal update complete: +{total_inserted} -{total_removed} declarations")
+        db.close()
+        return
+
+    # Full update (topic repo mode)
     if db.get_schema_version() == 0:
         click.echo("Database not initialized. Run 'lean-index init' first.")
         sys.exit(1)
@@ -209,52 +267,110 @@ def index_repo_cmd(ctx, url, branch):
     db.close()
 
 
-@main.command("index-local")
-@click.argument("path")
-@click.option("--name", "-n", default="", help="Repository name (defaults to directory name)")
+@main.command("add")
+@click.argument("target")
+@click.option("--name", "-n", default="", help="Repository name (defaults to directory/repo name)")
 @click.option("--description", "-d", default="", help="Repository description")
+@click.option("--branch", "-b", default="main", help="Branch (for URLs)")
 @click.pass_context
-def index_local_cmd(ctx, path, name, description):
-    """Index a local Lean project directory (no cloning needed).
+def add_cmd(ctx, target, name, description, branch):
+    """Add a local path or repo URL to your index.
 
-    Use this to add private repos or local projects to your index.
+    Saves to local-repos.yaml and indexes immediately.
 
-    Example: lean-index index-local ~/Documents/Github/auto-lie
+    \b
+    Examples:
+      lean-index add ~/Documents/Github/my-project/lean
+      lean-index add https://github.com/user/repo
+      lean-index add ./lean -n my-project -d "My formalization"
     """
-    db, config = get_db(ctx.obj["data_dir"], ctx.obj["config_dir"])
+    import yaml as _yaml
 
+    db, config = get_db(ctx.obj["data_dir"], ctx.obj["config_dir"])
     if db.get_schema_version() == 0:
         db.init_schema()
 
-    from .update import index_local
-    result = index_local(db, path=path, name=name, description=description)
+    config_dir = Path(ctx.obj["config_dir"]) if ctx.obj["config_dir"] else Path.cwd()
+    local_repos_file = config_dir / "local-repos.yaml"
+
+    # Determine if target is a URL or local path
+    is_url = target.startswith("http://") or target.startswith("https://") or target.startswith("git@")
+    resolved_path = "" if is_url else str(Path(target).expanduser().resolve())
+
+    if not is_url and not Path(resolved_path).is_dir():
+        click.echo(f"Error: {resolved_path} is not a directory")
+        sys.exit(1)
+
+    if not name:
+        if is_url:
+            name = target.rstrip("/").split("/")[-1]
+        else:
+            name = Path(resolved_path).name
+
+    # Save to local-repos.yaml
+    if local_repos_file.exists():
+        with open(local_repos_file) as f:
+            data = _yaml.safe_load(f) or {}
+    else:
+        data = {}
+
+    repos_list = data.setdefault("repos", [])
+
+    # Check for duplicates
+    for existing in repos_list:
+        if is_url and existing.get("url") == target:
+            click.echo(f"Already in local-repos.yaml: {target}")
+            break
+        if not is_url and existing.get("path") == resolved_path:
+            click.echo(f"Already in local-repos.yaml: {resolved_path}")
+            break
+    else:
+        entry = {"name": name}
+        if is_url:
+            entry["url"] = target
+            if branch != "main":
+                entry["branch"] = branch
+        else:
+            entry["path"] = resolved_path
+        if description:
+            entry["description"] = description
+        repos_list.append(entry)
+
+        with open(local_repos_file, "w") as f:
+            _yaml.dump(data, f, default_flow_style=False, sort_keys=False)
+        click.echo(f"Added to {local_repos_file}")
+
+    # Index immediately
+    if is_url:
+        from .update import index_repo
+        result = index_repo(db, url=target, name=name, branch=branch,
+                            description=description, source="local-repos")
+    else:
+        from .update import index_local
+        result = index_local(db, path=resolved_path, name=name, description=description)
 
     if result.get("error"):
         click.echo(f"Error: {result['error']}")
         sys.exit(1)
 
-    click.echo(f"Indexed {result.get('name', path)}: "
+    click.echo(f"Indexed {result.get('name', target)}: "
                f"{result.get('declarations', 0):,} declarations "
                f"({result.get('inserted', 0)} new, {result.get('removed', 0)} removed)")
 
+    # Match topics if configured
     if config.topics:
-        from .update import IndexDB as _  # ensure import
-        # Find the repo we just indexed
-        url = result.get("url", "")
-        if not url:
-            # Re-derive URL same way as index_local
-            from pathlib import Path as P
-            repo_dir = P(path).resolve()
+        url_key = target if is_url else ""
+        if not url_key:
             try:
                 r = subprocess.run(
-                    ["git", "-C", str(repo_dir), "remote", "get-url", "origin"],
+                    ["git", "-C", resolved_path, "remote", "get-url", "origin"],
                     capture_output=True, text=True, timeout=5,
                 )
-                url = r.stdout.strip() if r.returncode == 0 else f"local://{repo_dir}"
+                url_key = r.stdout.strip() if r.returncode == 0 else f"local://{resolved_path}"
             except Exception:
-                url = f"local://{repo_dir}"
+                url_key = f"local://{resolved_path}"
 
-        repo = db.get_repo(url)
+        repo = db.get_repo(url_key)
         if repo:
             click.echo(f"Matching {len(config.topics)} topics...")
             from .match import match_all_topics
