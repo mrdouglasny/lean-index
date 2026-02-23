@@ -400,13 +400,15 @@ class IndexDB:
         joins = []
         wheres = []
 
-        # Composite ranking: BM25 is negative (lower = better), so we negate it
-        # and add bonus signals. Topic confidence via scalar subquery (GROUP BY
-        # is incompatible with FTS bm25 function).
+        # Use FTS5's built-in `rank` column instead of bm25() function.
+        # bm25() fails with JOINs and GROUP BY; `rank` is equivalent but
+        # works in any query context. Also use scalar subquery for topic
+        # confidence to avoid GROUP BY. ln() replaced since it's not in
+        # stock SQLite.
         base = """
             SELECT d.*, r.name as repo_name, r.url as repo_url,
                    r.stars as repo_stars,
-                   bm25(declarations_fts) as bm25_rank,
+                   fts.rank as bm25_rank,
                    COALESCE((SELECT MAX(tm2.confidence) FROM topic_matches tm2
                              WHERE tm2.declaration_id = d.id), 0.0) as topic_confidence
             FROM declarations_fts fts
@@ -445,12 +447,10 @@ class IndexDB:
         if wheres:
             sql += " WHERE " + " AND ".join(wheres)
 
-        # Composite score: negate BM25 (lower=better) and add bonuses
+        # Composite score: negate BM25 rank (lower=better) and add bonuses
         sql += """ ORDER BY (
-            -bm25(declarations_fts)
-            + 0.3 * COALESCE((SELECT MAX(tm3.confidence) FROM topic_matches tm3
-                               WHERE tm3.declaration_id = d.id), 0.0)
-            + 0.2 * ln(COALESCE(r.stars, 0) + 1)
+            -bm25_rank
+            + 0.3 * topic_confidence
             + 0.1 * CASE WHEN d.docstring != '' THEN 1 ELSE 0 END
             + CASE d.kind
                 WHEN 'theorem' THEN 0.3
