@@ -101,6 +101,74 @@ def index_repo(db: IndexDB, url: str, name: str = "",
     return result
 
 
+def index_local(db: IndexDB, path: str, name: str = "",
+                url: str = "", description: str = "") -> dict:
+    """Index a local Lean project directory (no cloning)."""
+    repo_dir = Path(path).resolve()
+    if not repo_dir.is_dir():
+        return {"error": f"Not a directory: {repo_dir}", "name": name}
+
+    if not name:
+        name = repo_dir.name
+
+    if not url:
+        # Try to get URL from git remote
+        try:
+            result = subprocess.run(
+                ["git", "-C", str(repo_dir), "remote", "get-url", "origin"],
+                capture_output=True, text=True, timeout=5,
+            )
+            if result.returncode == 0:
+                url = result.stdout.strip()
+        except (subprocess.TimeoutExpired, FileNotFoundError):
+            pass
+        if not url:
+            url = f"local://{repo_dir}"
+
+    # Get current HEAD
+    head_sha = None
+    try:
+        result = subprocess.run(
+            ["git", "-C", str(repo_dir), "rev-parse", "HEAD"],
+            capture_output=True, text=True, timeout=5,
+        )
+        if result.returncode == 0:
+            head_sha = result.stdout.strip()
+    except (subprocess.TimeoutExpired, FileNotFoundError):
+        pass
+
+    # Upsert repo record
+    repo_id = db.upsert_repo(
+        url=url, name=name, source="local",
+        description=description,
+    )
+
+    # Extract declarations directly from local path
+    decls = extract_repo(repo_dir)
+
+    if not decls:
+        logger.info(f"No declarations found in {name}")
+        return {"declarations": 0, "name": name}
+
+    # Insert into DB
+    inserted, updated = db.bulk_upsert_declarations(repo_id, decls)
+    current_names = {d["name"] for d in decls}
+    removed = db.mark_stale_declarations(repo_id, current_names)
+
+    if head_sha:
+        db.update_repo_indexed(repo_id, head_sha)
+
+    result = {
+        "name": name,
+        "declarations": len(decls),
+        "inserted": inserted,
+        "updated": updated,
+        "removed": removed,
+    }
+    logger.info(f"Indexed local {name}: {result}")
+    return result
+
+
 def run_update(db: IndexDB, config: IndexConfig) -> dict:
     """Run a full update cycle.
 

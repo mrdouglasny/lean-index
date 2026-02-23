@@ -209,6 +209,60 @@ def index_repo_cmd(ctx, url, branch):
     db.close()
 
 
+@main.command("index-local")
+@click.argument("path")
+@click.option("--name", "-n", default="", help="Repository name (defaults to directory name)")
+@click.option("--description", "-d", default="", help="Repository description")
+@click.pass_context
+def index_local_cmd(ctx, path, name, description):
+    """Index a local Lean project directory (no cloning needed).
+
+    Use this to add private repos or local projects to your index.
+
+    Example: lean-index index-local ~/Documents/Github/auto-lie
+    """
+    db, config = get_db(ctx.obj["data_dir"], ctx.obj["config_dir"])
+
+    if db.get_schema_version() == 0:
+        db.init_schema()
+
+    from .update import index_local
+    result = index_local(db, path=path, name=name, description=description)
+
+    if result.get("error"):
+        click.echo(f"Error: {result['error']}")
+        sys.exit(1)
+
+    click.echo(f"Indexed {result.get('name', path)}: "
+               f"{result.get('declarations', 0):,} declarations "
+               f"({result.get('inserted', 0)} new, {result.get('removed', 0)} removed)")
+
+    if config.topics:
+        from .update import IndexDB as _  # ensure import
+        # Find the repo we just indexed
+        url = result.get("url", "")
+        if not url:
+            # Re-derive URL same way as index_local
+            from pathlib import Path as P
+            repo_dir = P(path).resolve()
+            try:
+                r = subprocess.run(
+                    ["git", "-C", str(repo_dir), "remote", "get-url", "origin"],
+                    capture_output=True, text=True, timeout=5,
+                )
+                url = r.stdout.strip() if r.returncode == 0 else f"local://{repo_dir}"
+            except Exception:
+                url = f"local://{repo_dir}"
+
+        repo = db.get_repo(url)
+        if repo:
+            click.echo(f"Matching {len(config.topics)} topics...")
+            from .match import match_all_topics
+            match_all_topics(db, config.topics, repo_id=repo["id"])
+
+    db.close()
+
+
 @main.command("add-repo")
 @click.argument("url")
 @click.option("--description", "-d", default="", help="Repository description")
