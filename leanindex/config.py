@@ -48,6 +48,7 @@ class RepoEntry:
 class IndexConfig:
     topics: list[TopicConfig] = field(default_factory=list)
     repos: list[RepoEntry] = field(default_factory=list)
+    blocked_repos: set[str] = field(default_factory=set)
     data_dir: Path = field(default_factory=lambda: Path("data"))
 
     @property
@@ -57,6 +58,28 @@ class IndexConfig:
     @property
     def cache_dir(self) -> Path:
         return self.data_dir / "mathlib-cache"
+
+
+def load_blocklist(config_dir: Path | None = None) -> set[str]:
+    """Load blocked repo URLs from engine + local blocklist.yaml files.
+
+    Merges the built-in blocklist (shipped with lean-index) with any
+    local blocklist.yaml found in the config directory.
+    """
+    blocked = set()
+
+    # 1. Built-in blocklist (in the leanindex package)
+    builtin = Path(__file__).parent / "blocklist.yaml"
+    for path in [builtin, config_dir / "blocklist.yaml" if config_dir else None]:
+        if path and path.exists():
+            with open(path) as f:
+                data = yaml.safe_load(f) or {}
+            for entry in data.get("blocked_repos", []):
+                url = entry if isinstance(entry, str) else entry.get("url", "")
+                if url:
+                    blocked.add(url.rstrip("/"))
+
+    return blocked
 
 
 def find_config_dir(start: Path | None = None) -> Path:
@@ -102,9 +125,11 @@ def load_config(config_dir: Path | None = None,
             ))
 
     resolved_data_dir = Path(data_dir) if data_dir else config_dir / "data"
+    blocked = load_blocklist(config_dir)
 
     return IndexConfig(
         topics=topics,
         repos=repos,
+        blocked_repos=blocked,
         data_dir=resolved_data_dir,
     )

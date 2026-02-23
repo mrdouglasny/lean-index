@@ -1,0 +1,10 @@
+# Repos to exclude from indexing.
+# These are dead forks, junk, or duplicates that inflate the index
+# without contributing original content.
+#
+# Format: list of GitHub URLs (matched as prefixes).
+# Topic repos can also add a local blocklist.yaml to exclude additional repos.
+
+blocked_repos:
+  - url: https://github.com/stagiralabs/eval_MeasureTheory
+    reason: "Dead Mathlib fork (0 stars, no original content, 175K duplicate declarations)"

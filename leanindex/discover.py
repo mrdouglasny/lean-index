@@ -239,5 +239,14 @@ def discover_all(config: IndexConfig, cache_dir: Path) -> list[dict]:
                 seen_urls.add(repo["url"])
                 all_repos.append(repo)
 
+    # 4. Filter out blocked repos
+    if config.blocked_repos:
+        pre_block = len(all_repos)
+        all_repos = [r for r in all_repos
+                     if r.get("url", "").rstrip("/") not in config.blocked_repos]
+        blocked_count = pre_block - len(all_repos)
+        if blocked_count > 0:
+            logger.info(f"Blocked {blocked_count} repos from blocklist")
+
     logger.info(f"Total discovered repos: {len(all_repos)}")
     return all_repos
