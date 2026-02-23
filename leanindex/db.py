@@ -516,9 +516,7 @@ class IndexDB:
             sql += " WHERE " + " AND ".join(wheres)
 
         sql += """ ORDER BY (
-            COALESCE((SELECT MAX(tm3.confidence) FROM topic_matches tm3
-                      WHERE tm3.declaration_id = d.id), 0.0) * 0.3
-            + 0.2 * ln(COALESCE(r.stars, 0) + 1)
+            topic_confidence * 0.3
             + 0.1 * CASE WHEN d.docstring != '' THEN 1 ELSE 0 END
             + CASE d.kind
                 WHEN 'theorem' THEN 0.3
