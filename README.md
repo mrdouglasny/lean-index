@@ -42,7 +42,7 @@ other-lie-project            downloads pre-built DB from topic repo
 
 ## Quick Start
 
-### As a consumer (use an existing topic index)
+### As a consumer (use an existing topical index)
 
 ```bash
 # Install the engine
@@ -62,7 +62,7 @@ lean-index changelog --since 2026-02-01
 lean-index repos
 ```
 
-### As a topic maintainer (create a new topic index)
+### As a topic maintainer (create a new topical index)
 
 ```bash
 # Create a new topic repo
@@ -158,7 +158,7 @@ repos:
 
 Most users only need the first two. Use `lean-index build-repo <url>` for deep extraction when exact type signatures matter.
 
-## Publishing a Topic Index
+## Publishing a Topical Index
 
 Topic repos use GitHub Actions to build and publish the database weekly:
 

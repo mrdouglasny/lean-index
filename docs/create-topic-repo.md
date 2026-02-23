@@ -217,7 +217,7 @@ You can trigger the first build manually from the GitHub Actions tab, or wait fo
 
 ## Step 9: Tell people about it
 
-Once the first release is published, anyone can use your topic index:
+Once the first release is published, anyone can use your topical index:
 
 ```bash
 pip install git+https://github.com/mrdouglasny/lean-index.git

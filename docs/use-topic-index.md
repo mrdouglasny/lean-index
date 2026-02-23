@@ -1,6 +1,6 @@
-# Using a Topic Index in Your Project
+# Using a Topical Index in Your Project
 
-Download a pre-built topic index and search it from your project. No need to rebuild anything — the topic repo's CI does that for you.
+Download a pre-built topical index and search it from your project. No need to rebuild anything — the topic repo's CI does that for you.
 
 ## Prerequisites
 
@@ -13,7 +13,7 @@ Download a pre-built topic index and search it from your project. No need to reb
 pip install git+https://github.com/mrdouglasny/lean-index.git
 ```
 
-## Step 2: Download a topic index
+## Step 2: Download a topical index
 
 Find a topic repo that covers your area of interest:
 
@@ -91,7 +91,7 @@ lean-index fetch-db mrdouglasny/lean-index-lie
 
 This replaces your local `data/index.db` with the latest release. Your search results will reflect any new Mathlib commits, new repos discovered, and updated declarations.
 
-## Using multiple topic indexes
+## Using multiple topical indexes
 
 You can download indexes from multiple topic repos. They merge into the same database:
 
