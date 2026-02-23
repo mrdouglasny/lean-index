@@ -401,16 +401,17 @@ class IndexDB:
         wheres = []
 
         # Composite ranking: BM25 is negative (lower = better), so we negate it
-        # and add bonus signals. All wrapped in a single ORDER BY expression.
+        # and add bonus signals. Topic confidence via scalar subquery (GROUP BY
+        # is incompatible with FTS bm25 function).
         base = """
             SELECT d.*, r.name as repo_name, r.url as repo_url,
                    r.stars as repo_stars,
                    bm25(declarations_fts) as bm25_rank,
-                   COALESCE(MAX(tm2.confidence), 0.0) as topic_confidence
+                   COALESCE((SELECT MAX(tm2.confidence) FROM topic_matches tm2
+                             WHERE tm2.declaration_id = d.id), 0.0) as topic_confidence
             FROM declarations_fts fts
             JOIN declarations d ON d.id = fts.rowid
             JOIN repos r ON r.id = d.repo_id
-            LEFT JOIN topic_matches tm2 ON tm2.declaration_id = d.id
         """
 
         if query:
@@ -444,14 +445,11 @@ class IndexDB:
         if wheres:
             sql += " WHERE " + " AND ".join(wheres)
 
-        # Group by declaration to aggregate topic confidence
-        sql += " GROUP BY d.id"
-
         # Composite score: negate BM25 (lower=better) and add bonuses
-        # kind_weight: theorem/lemma=0.3, def/abbrev=0.2, structure/class=0.2, else=0
         sql += """ ORDER BY (
-            -bm25_rank
-            + 0.3 * topic_confidence
+            -bm25(declarations_fts)
+            + 0.3 * COALESCE((SELECT MAX(tm3.confidence) FROM topic_matches tm3
+                               WHERE tm3.declaration_id = d.id), 0.0)
             + 0.2 * ln(COALESCE(r.stars, 0) + 1)
             + 0.1 * CASE WHEN d.docstring != '' THEN 1 ELSE 0 END
             + CASE d.kind
@@ -481,10 +479,10 @@ class IndexDB:
         base = """
             SELECT d.*, r.name as repo_name, r.url as repo_url,
                    r.stars as repo_stars,
-                   COALESCE(MAX(tm2.confidence), 0.0) as topic_confidence
+                   COALESCE((SELECT MAX(tm2.confidence) FROM topic_matches tm2
+                             WHERE tm2.declaration_id = d.id), 0.0) as topic_confidence
             FROM declarations d
             JOIN repos r ON r.id = d.repo_id
-            LEFT JOIN topic_matches tm2 ON tm2.declaration_id = d.id
         """
 
         if kind:
@@ -517,10 +515,9 @@ class IndexDB:
         if wheres:
             sql += " WHERE " + " AND ".join(wheres)
 
-        sql += " GROUP BY d.id"
-
         sql += """ ORDER BY (
-            0.3 * topic_confidence
+            COALESCE((SELECT MAX(tm3.confidence) FROM topic_matches tm3
+                      WHERE tm3.declaration_id = d.id), 0.0) * 0.3
             + 0.2 * ln(COALESCE(r.stars, 0) + 1)
             + 0.1 * CASE WHEN d.docstring != '' THEN 1 ELSE 0 END
             + CASE d.kind
