@@ -1,3 +1,4 @@
+# Copyright 2026 Michael R. Douglas. MIT License.
 """SQLite + FTS5 database for the Lean declaration index."""
 
 from __future__ import annotations

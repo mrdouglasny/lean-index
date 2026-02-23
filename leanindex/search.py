@@ -1,3 +1,4 @@
+# Copyright 2026 Michael R. Douglas. MIT License.
 """Search interface for the declaration index."""
 
 from __future__ import annotations

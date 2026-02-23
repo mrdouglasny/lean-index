@@ -272,4 +272,4 @@ Requires Python 3.10+. Dependencies: click, pyyaml, requests, beautifulsoup4.
 
 ## License
 
-MIT
+Copyright 2026 Michael R. Douglas. MIT License.

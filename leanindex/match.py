@@ -1,3 +1,4 @@
+# Copyright 2026 Michael R. Douglas. MIT License.
 """Topic matching engine for declarations."""
 
 from __future__ import annotations

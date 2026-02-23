@@ -1,3 +1,4 @@
+# Copyright 2026 Michael R. Douglas. MIT License.
 """Report generation: stats, changelog, topic coverage."""
 
 from __future__ import annotations

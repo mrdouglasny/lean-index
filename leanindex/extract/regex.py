@@ -1,3 +1,4 @@
+# Copyright 2026 Michael R. Douglas. MIT License.
 """Regex-based extraction of Lean 4 declarations from source files.
 
 Parses .lean files without building — handles 95%+ of declarations.

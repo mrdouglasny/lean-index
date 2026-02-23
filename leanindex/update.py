@@ -1,3 +1,4 @@
+# Copyright 2026 Michael R. Douglas. MIT License.
 """Orchestrates the full update cycle: discover, index, match, log."""
 
 from __future__ import annotations

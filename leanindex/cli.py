@@ -1,3 +1,4 @@
+# Copyright 2026 Michael R. Douglas. MIT License.
 """CLI for lean-index: cross-repository Lean 4 declaration index."""
 
 from __future__ import annotations

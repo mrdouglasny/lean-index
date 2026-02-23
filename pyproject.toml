@@ -9,7 +9,7 @@ description = "Cross-repository index of Lean 4 declarations, filterable by math
 readme = "README.md"
 license = {text = "MIT"}
 requires-python = ">=3.9"
-authors = [{ name = "mrdouglasny" }]
+authors = [{ name = "Michael R. Douglas" }]
 dependencies = [
     "click>=8.0",
     "pyyaml>=6.0",

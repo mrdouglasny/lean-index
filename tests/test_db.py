@@ -1,3 +1,4 @@
+# Copyright 2026 Michael R. Douglas. MIT License.
 """Validation tests for IndexDB search and stats functions.
 
 Runs against a real or freshly-created test database. Use pytest:

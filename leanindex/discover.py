@@ -1,3 +1,4 @@
+# Copyright 2026 Michael R. Douglas. MIT License.
 """Discover Lean 4 repos from Lean Reservoir and GitHub search."""
 
 from __future__ import annotations
